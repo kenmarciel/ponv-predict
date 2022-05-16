@@ -1,5 +1,5 @@
 ---
-title: "STAT 685 - Directed Studies"
+title: "STAT 685 - Project in Statistics"
 author: "Ken Marciel"
 date: "2/7/2022"
 output:
