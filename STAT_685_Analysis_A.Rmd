@@ -1,0 +1,692 @@
+---
+title: "STAT 685 - Directed Studies"
+author: "Ken Marciel"
+date: "2/7/2022"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+```{r clearEnvironment, include=FALSE}
+## Computing environment
+ls() # list objects in environment
+rm(list=ls()) # clear objects from environment
+ls() # confirm that environment is clear of objects
+```
+
+
+# Predicting the Incidence of Postoperative Nausea and Vomiting (PONV)
+
+The incidence of post-operative nausea and vomiting (PONV) is generally in the range of 20-40% (Apfel *et al*). This condition has negative effects on the health and well-being of patients, and is financially costly to healthcare providers. The tradeoff is that preventive therapy has negative side effects and financial costs. So, the challenge is to develop a scoring system that most accurately recommends prophylaxis for the patients at high risk of PONV. In other words, a predictive model that is neither to conservative nor too liberal in determining which patients should be prescribed prophylaxis. This balancing act has been described in the medical literature as the prevent-or-cure dilemma.
+
+There are several well-documented models for predicting PONV, to help guide prudent administration of anti-emetic prophylaxis. These models are typically developed using logistic regression and stepwise backward elimination for variable selection. The most common measures of validity are discrimination and calibration. The most common measure of discriminating power is AUC, the area under the receiver operating characteristic curve (ROC). Calibration is most commonly assessed using the slope and squared correlation ($R^2$) for the line in a calibration plot. In the literature, AUC values range from 0.61 to 0.785 (Apfel *et al*, Sinclair *et al*), calibration slopes range from 0.3 to 1.71 (Apfel *et al*, Eberhart *et al*), and squared correlation ranges from 0.763 to 0.99 (Apfel *et al*).
+
+This investigation analyzed a data set of 461 patients from anesthesiologist Jelena Velickovic, MD, in Belgrade, Serbia. The purpose was to develop a predictive model for PONV with performance comparable to or better than models previously published in the literature.
+
+
+## Methods
+
+Data analysis was performed using the R statistical computing software through the R Markdown interface, with the following additional packages installed to R.
+
+
+## Packages
+
+```{r packages, message=FALSE, warning=FALSE}
+library(dplyr) # rename variables
+library(alr4) # marginal model plots
+library(leaps) # regression subset plots
+library(car) # regression subset plots
+library(rms) # logistic regression
+library(pROC) # ROC curve
+library(caret) # data splitting, resampling
+```
+
+
+## Data set
+
+```{r dataSet, include=FALSE}
+## Obtain raw data set
+path <- 'C:/Users/keoka/OneDrive - Texas A&M University/Courses/STAT_685/Data'
+setwd(path) # set working directory to location of data file
+ponv <- read.csv('PONV.csv') # read data from file
+
+## Review data set
+#class(ponv) # data frame
+#dim(ponv) # 916 rows, 26 columns
+#str(ponv) # display structure of data set
+#names(ponv) # display names of variables in data set
+# Rename selected variables
+ponv <- rename(ponv,
+               AgeOver50 = Ageover50,
+               AnesthesiaDuration = Anaesthesiaduration,
+               AnesthesiaOverHour = Anaesthesiaoverhour,
+               Nonsmoker = Smoking, 
+               KinetosisHistory = Kinethosishist,
+               PONVhistory = PONVhist,
+               SerotoninBlocker = Serotoninblock,
+               CormackLehane = Cormackliheene)
+#summary(ponv) # all columns are encoded as numeric values
+#head(ponv) # display first 6 rows of data set
+#tail(ponv) # display last 6 rows of data set
+
+## Clean data set
+ponv <- ponv[complete.cases(ponv),] # remove rows with missing values
+#dim(ponv) # 916 rows, 26 columns (none of the records have missing values)
+ponv <- unique(ponv) # remove duplicate records
+#dim(ponv) # 823 rows, 26 columns (93 duplicate rows removed)
+```
+
+The raw data set has 916 rows and 26 columns. None of the rows have missing values. After removing the 93 duplicates, the cleaned data set has 823 rows and 26 columns.
+
+
+## Sample size
+
+```{r sampleSize, include=FALSE}
+attach(ponv)
+## Identify number of records of patients who took prophylaxis = 362
+#nrow(ponv[Glukocorticoid==1 | Metoklopramid==1 | Serotoninblock==1,])
+# Remove 362 records of patients who took prophylaxis
+ponv <- ponv[Glukocorticoid==0 & Metoklopramid==0 & SerotoninBlocker==0,]
+detach(ponv)
+
+## Review data set.
+#dim(ponv) # 461 rows, 26 columns (362 rows removed)
+n <- nrow(ponv) # sample size = 461
+```
+
+After removing the 362 records of patients who received prophylaxis, the data set now has 461 rows and 26 columns.
+
+
+## Variables in data set
+
+```{r originalVariables, include=FALSE}
+## names of the 26 variables in the original data set
+names(ponv) # column names
+```
+
+Next, we will make sure that the original 26 variables are properly encoded for data analysis.
+
+```{r reformatVariables, include=FALSE}
+## Identification variable (1)
+Patient <- as.character(ponv$Patient) # integer changed to character
+
+## Response variables (9)
+PONV0to2 <- as.factor(ponv$PONV0to2) # integer changed to factor
+PONV2to24 <- as.factor(ponv$PONV2to24) # integer changed to factor
+PONV0to24 <- as.factor(ponv$PONV0to24) # integer changed to factor
+Headache0to2 <- as.factor(ponv$Headache0to2) # integer changed to factor
+Headache2to24 <- as.factor(ponv$Headache2to24) # integer changed to factor
+Headache0to24 <- as.factor(ponv$Headache0to24) # integer changed to factor
+SinclairScore <- ponv$SinclairScore # numeric
+ApfelScore <- ponv$ApfelScore # numeric
+LelaScore <- ponv$LelaScore # integer
+
+## Predictor variables (16)
+AgeOver50 <- as.factor(ponv$AgeOver50) # integer changed to factor
+Age <- ponv$Age # integer
+Gender <- as.factor(ponv$Gender) # integer changed to factor
+Diagnosis <- as.factor(ponv$Diagnosis) # integer changed to factor
+Surgery <- as.factor(ponv$Surgery) # numeric changed to factor
+AnaesthesiaDuration <- ponv$AnaesthesiaDuration # integer
+AnaesthesiaOverHour <- as.factor(ponv$AnaesthesiaOverHour) # integer changed to factor
+Weight <- ponv$Weight # numeric
+BMI <- ponv$BMI # numeric
+Nonsmoker <- as.factor(ponv$Nonsmoker) # integer changed to factor
+KinetosisHistory <- as.factor(ponv$KinetosisHistory) # integer changed to factor
+PONVhistory <- as.factor(ponv$PONVhistory) # integer changed to factor
+Glukocorticoid <- as.factor(ponv$Glukocorticoid) # integer changed to factor
+Metoklopramid <- as.factor(ponv$Metoklopramid) # integer changed to factor
+SerotoninBlocker <- as.factor(ponv$SerotoninBlocker) # integer changed to factor
+CormackLehane <- as.factor(ponv$CormackLehane) # numeric changed to factor
+```
+
+The 26 variables from the original data set consist of the ID variable, 9 response variables, and 16 predictor variables.
+
+
+## Variables considered for analysis of PONV incidence within 24 hours
+
+Response variable selected:
+
+$Y$ = PONV0to24 (binary) = incidence of PONV within 24 hours of operation 
+
+For the purpose of developing a predictive model for PONV, we exclude the eight predictor variables corresponding to anesthetic and postoperative patient risk factors. In the full model, we consider the remaining eight predictor variables corresponding to the preoperative patient risk factors:
+
+$x_{1}$ = Age (integer)  
+$x_{2}$ = Gender (binary)  
+$x_{3}$ ... $x_{27}$ = Diagnosis (categorical with 26 levels)  
+$x_{28}$ ... $x_{34}$ = Surgery (categorical with 8 levels)  
+$x_{35}$ = BMI (real)  
+$x_{36}$ = Nonsmoker (binary)  
+$x_{37}$ = Kinetosis history (binary)  
+$x_{38}$ = PONV history (binary)  
+
+The model includes 25 dummy variables for the 26 levels of *Diagnosis*, and 7 dummy variables for the 8 levels of *Surgery*. This is a total of 38 variables, when the factors with more than two levels are taken into full account.
+
+```{r subsetVariables, include=FALSE}
+## Data set for regression analysis of PONV incidence within 24 hours
+ponv <- data.frame(Patient, # ID variable
+                  PONV0to24, # response variable
+                  # 8 predictor variables
+                  Age, Gender, Diagnosis, Surgery, 
+                  BMI, Nonsmoker, KinetosisHistory, PONVhistory)
+#class(ponv) # data frame
+#dim(ponv) # 461 rows, 10 columns
+n <- nrow(ponv) # sample size = 461
+p <- ncol(ponv) - 2 # predictor variables for full model = 8
+
+## Observed incidence of PONV = 37.3%
+# subtract 1 to change factors from 2/1 to 1/0
+PONVincidence = sum(as.numeric(ponv$PONV0to24)-1) /
+  length(as.numeric(ponv$PONV0to24)-1)
+```
+
+The 10 variables in the data set for the full model consist of the ID variable, the response variable, and 8 predictor variables. The observed incidence of PONV for this data set is `r round(PONVincidence,2)`.
+
+
+## Full model for logistic regression
+
+We begin by considering the following generalized linear model for the binary response variable:
+
+$Y=g(\beta_{0}+\beta_{1}x_{1}+\beta_{2}x_{2}+\beta_{3}x_{3}+...+\beta_{27}x_{27}+\beta_{28}x_{28}+...+\beta_{34}x_{34}+\beta_{35}x_{35}+\beta_{36}x_{36}+\beta_{37}x_{37}+\beta_{38}x_{38}+e)$  
+
+where *e* ~ iid $N(0,1)$.
+
+To model the binary response variable through a generalized linear model, we use the log odds ratio (logit) as the link function as follows:
+
+$g^{-1}(Y)=\log(\frac{\theta(Y)}{1-\theta(Y)})=\beta_{0}+\beta_{1}x_{1}+\beta_{2}x_{2}+\beta_{3}x_{3}+...+\beta_{27}x_{27}+\beta_{28}x_{28}+...+\beta_{34}x_{34}+\beta_{35}x_{35}+\beta_{36}x_{36}+\beta_{37}x_{37}+\beta_{38}x_{38}+e$  
+
+$\theta$ is the parameter of the binomial distribution, which is related to a transformation of the logit as follows:  
+
+$\theta(Y)=\frac{\exp(Y)}{1+\exp(Y)}=\frac{1}{1+{\exp(-Y)}}$  
+
+For this analysis, our $\theta$ of interest is the proportion of patients diagnosed with PONV within the 24 hours following surgery.
+
+The logistic regression model is fitted using the generalized linear method of least squares:
+
+```{r fullModel, echo=FALSE}
+## Use glm (generalized linear model) function to fit logistic regression
+glmFit1 <- glm(PONV0to24 ~ Age + Gender + Diagnosis + Surgery + 
+                 BMI + Nonsmoker + KinetosisHistory + PONVhistory, 
+               family = binomial, data = ponv)
+summary(glmFit1)
+```
+
+Three of the predictors in the full model have estimated coefficients that are statistically significant. In descending order of significance, these are PONV history, gender, and nonsmoker.
+
+
+### Plots of standardized deviance residuals
+
+```{R stanresDev1, echo=FALSE, warning=FALSE}
+## Hat matrix
+hval.glmFit1 <- influence(glmFit1)$hat
+
+## Standardized deviance residuals
+stanresDev.glmFit1 <- residuals(glmFit1)/sqrt(1-hval.glmFit1)
+
+## Plots of standardized deviance residuals
+par(mfrow = c(2,2))
+
+plot(Age, stanresDev.glmFit1,
+     ylab = "Standardized Deviance Residuals", xlab = "Age")
+
+plot(Gender, stanresDev.glmFit1,
+     ylab = "Standardized Deviance Residuals", xlab = "Gender")
+
+plot(Diagnosis, stanresDev.glmFit1,
+     ylab = "Standardized Deviance Residuals", xlab = "Diagnosis")
+
+plot(Surgery, stanresDev.glmFit1,
+     ylab = "Standardized Deviance Residuals", xlab = "Surgery")
+
+plot(Weight, stanresDev.glmFit1,
+     ylab = "Standardized Deviance Residuals", xlab = "Weight")
+
+plot(BMI, stanresDev.glmFit1,
+     ylab = "Standardized Deviance Residuals", xlab = "BMI")
+
+plot(Nonsmoker, stanresDev.glmFit1,
+     ylab = "Standardized Deviance Residuals", xlab = "Smoking")
+
+plot(KinetosisHistory, stanresDev.glmFit1,
+     ylab = "Standardized Deviance Residuals", xlab = "Kinetosis history")
+
+plot(PONVhistory, stanresDev.glmFit1,
+     ylab = "Standardized Deviance Residuals", xlab = "PONV history")
+```
+
+Skewness is present in all of the predictors, most of which are right-skewed. This suggests that the log odds may depend on each skewed predictor through both a linear function and a log transformation. However, residual plots are difficult to interpret for binary data, so we will examine marginal model plots instead.
+
+
+### Marginal model plots for the continuous predictors
+
+```{r marginalModelPlots1, echo=FALSE, warning=FALSE}
+mmps(glmFit1) # marginal model plots displayed altogether in two-column format
+#mmp(glmFit1,Age); mmp(glmFit1,BMI); mmp(glmFit1) # to view plots individually
+```
+
+There is reasonable agreement between the two fits in each of the marginal model plots for BMI and the linear predictor. Due to the lack of fit for Age, and the presence of parabolic curvature for the observed response, one possible approach is to consider adding a quadratic term for Age.
+
+$g^{-1}(Y)=\log(\frac{\theta(Y)}{1-\theta(Y)})=\beta_{0}+\beta_{1}x_{1}+\beta_{2}x_{2}^2+\beta_{3}x_{3}+\beta_{4}x_{4}+...+\beta_{28}x_{28}+\beta_{29}x_{29}+...+\beta_{35}x_{35}+\beta_{36}x_{36}+\beta_{37}x_{37}+\beta_{38}x_{38}+\beta_{39}x_{39}+e$ 
+
+```{r glmFit2, echo=FALSE, warning=FALSE}
+## Add a quadratic term for age to the model
+glmFit2 <- glm(PONV0to24 ~ Age + I(Age^2) + Gender + Diagnosis + Surgery + BMI + 
+           Nonsmoker + KinetosisHistory + PONVhistory, 
+           family = binomial, data = ponv)
+summary(glmFit2)
+```
+
+After adding a squared term for age to the full model, three of the predictors have estimated coefficients that are statistically significant. In descending order of significance, these are PONV history, gender, and nonsmoker. This is the same result obtained without the squared term for age.
+
+```{r marginalModelPlots2, echo=FALSE, warning=FALSE}
+mmps(glmFit2) # marginal model plots of refitted model
+```
+
+After adding the quadratic term for age, there is reasonable agreement between the two fits (observed and predicted) in each of the marginal model plots for $Age$, $Age^2$, $BMI$, and the linear predictor. This indicates that the current model is an adequate fit for the data.
+
+
+### Leverage values and standardized deviance residuals
+
+As a final validity check, we examine leverage values and standardized deviance residuals.
+
+```{R stanresDev2, echo=FALSE, warning=FALSE}
+hval.glmFit2 <- influence(glmFit2)$hat # hat matrix (leverage values)
+p2 <- p + 1 # 10 predictors = 9 linear predictors plus quadratic term for Age
+avgLev.glmFit2 <- (p2 + 1) / n  # average leverage
+cutLev.glmFit2 <- 2 * avgLev.glmFit2  # cutoff for high leverage
+stanresDev.glmFit2 <- residuals(glmFit2)/sqrt(1-hval.glmFit2) # standardized deviance residuals
+plot(hval.glmFit2, stanresDev.glmFit2,
+     ylab = "Standardized Deviance Residuals",
+     xlab = "Leverage Values")
+abline(v = cutLev.glmFit2)
+identify(hval.glmFit2, stanresDev.glmFit2, labels = Patient)
+```
+
+A plot of leverage values and standardized deviance residuals reveals that none of the leverage points exceed 2.5 standard deviations. Six of the points exceed two standard deviations and should be investigated. However, since these points comprise only 1% of the 461 values in the data set, we will continue with the assumption that the current model is an adequate fit for the data. Therefore, we next proceed to variable selection.
+
+
+## Variable selection using all possible subsets
+
+### Plots of $R^2_{adj}$ against subset size for the best subset of each size
+
+```{r predictorSubsets, echo=FALSE}
+Age2 <- Age^2
+X <- cbind(Age, Age2, Gender, Diagnosis, Surgery, BMI, Nonsmoker, 
+           KinetosisHistory, PONVhistory)
+b <- regsubsets(as.matrix(X), PONV0to24)
+rs <- summary(b)
+par(mfrow = c(1,2))
+plot(1:8, rs$adjr2, xlab = "Subset Size", ylab = "Adjusted R-squared")
+#subsets(b, statistic = c("adjr2"))
+```
+
+The plot of adjusted $R^2$ values shows the best predictor subsets to be as follows:
+
+1 predictor: PONVhistory  
+2 predictors: PONVhistory, Surgery  
+3 predictors: PONVhistory, Surgery, Gender  
+4 predictors: PONVhistory, Surgery, Gender, Nonsmoker  
+5 predictors: PONVhistory, Surgery, Gender, Nonsmoker, Age$^2$  
+6 predictors: PONVhistory, Surgery, Gender, Nonsmoker, Age$^2$, BMI   
+7 predictors: PONVhistory, Surgery, Gender, Nonsmoker, Age$^2$, BMI, Age   
+8 predictors: PONVhistory, Surgery, Gender, Nonsmoker, Age$^2$, BMI, Age, KinetosisHistory   
+
+The maximum value of $R^2$ corresponds to the predictor subset of size seven. This is expected since $R^2$ increases (without penalty) as the number of predictors added to the model increases. This may lead to overfitting of the model to the data that it is trained on.
+
+Viewing the results of the adjusted $R^2$ plot another way, the number of models that include each variable is as follows:
+
+8 models: PONVhist  
+7 models: Surgery  
+6 models: Gender  
+5 models: Nonsmoker  
+4 models: Age$^2$  
+3 models: BMI  
+2 models: Age  
+1 model: KinetosisHist  
+
+
+### Values of $R^2_{adj}$, AIC, AIC$_{C}$, and BIC for the best subset of each size
+
+The predictor with the smallest *p*-value for its estimated coefficient is added to each subset to obtain the next subset.
+
+```{r glmSubsets}
+# Subset size = 1
+om1 <- glm(PONV0to24 ~ PONVhistory, family = binomial, data = ponv)
+# Subset size = 2
+om2 <- glm(PONV0to24 ~ PONVhistory + Surgery, family = binomial, data = ponv)
+# Subset size = 3
+om3 <- glm(PONV0to24 ~ PONVhistory + Surgery + Gender, family = binomial, 
+          data = ponv)
+# Subset size = 4
+om4 <- glm(PONV0to24 ~ PONVhistory + Surgery + Gender + Nonsmoker, 
+          family = binomial, data = ponv)
+# Subset size = 5
+om5 <- glm(PONV0to24 ~ PONVhistory + Surgery + Gender + Nonsmoker + I(Age^2), 
+          family = binomial, data = ponv)
+# Subset size = 6
+om6 <- glm(PONV0to24 ~ PONVhistory + Surgery + Gender + Nonsmoker + I(Age^2) 
+           + BMI, family = binomial, data = ponv)
+# Subset size = 7
+om7 <- glm(PONV0to24 ~ PONVhistory + Surgery + Gender + Nonsmoker + I(Age^2) 
+           + BMI + Age, family = binomial, data = ponv)
+# Subset size = 8
+om8 <- glm(PONV0to24 ~ PONVhistory + Surgery + Gender + Nonsmoker + I(Age^2) 
+           + BMI + Age + KinetosisHistory, family = binomial, data = ponv)
+# Subset size = 9
+om9 <- glmFit2
+```
+
+
+### Calculate AIC
+
+```{r AIC}
+extractAIC(om1, k = 2)
+extractAIC(om2, k = 2)
+extractAIC(om3, k = 2)
+extractAIC(om4, k = 2)
+extractAIC(om5, k = 2)
+extractAIC(om6, k = 2)
+extractAIC(om7, k = 2)
+extractAIC(om8, k = 2)
+extractAIC(om9, k = 2)
+```
+
+The minimum value of AIC corresponds to the predictor subset of size four: PONVhistory, Surgery, Gender, and Nonsmoker.
+
+
+### Calculate AIC$_{C}$
+
+```{r correctedAIC}
+npar.1 <- length(om1$coefficients) + 1
+npar.2 <- length(om2$coefficients) + 1
+npar.3 <- length(om3$coefficients) + 1
+npar.4 <- length(om4$coefficients) + 1
+npar.5 <- length(om5$coefficients) + 1
+npar.6 <- length(om6$coefficients) + 1
+npar.7 <- length(om7$coefficients) + 1
+npar.8 <- length(om8$coefficients) + 1
+npar.9 <- length(om9$coefficients) + 1
+
+extractAIC(om1, k = 2) + 2 * npar.1 * (npar.1 + 1) / (n - npar.1 - 1)
+extractAIC(om2, k = 2) + 2 * npar.2 * (npar.2 + 1) / (n - npar.2 - 1)
+extractAIC(om3, k = 2) + 2 * npar.3 * (npar.3 + 1) / (n - npar.3 - 1)
+extractAIC(om4, k = 2) + 2 * npar.4 * (npar.4 + 1) / (n - npar.4 - 1)
+extractAIC(om5, k = 2) + 2 * npar.5 * (npar.5 + 1) / (n - npar.5 - 1)
+extractAIC(om6, k = 2) + 2 * npar.6 * (npar.6 + 1) / (n - npar.6 - 1)
+extractAIC(om7, k = 2) + 2 * npar.7 * (npar.7 + 1) / (n - npar.7 - 1)
+extractAIC(om8, k = 2) + 2 * npar.8 * (npar.8 + 1) / (n - npar.8 - 1)
+extractAIC(om9, k = 2) + 2 * npar.9 * (npar.9 + 1) / (n - npar.9 - 1)
+```
+
+The minimum value of AIC$_{C}$ also corresponds to the predictor subset of size four: PONVhistory, Surgery, Gender, and Nonsmoker.
+
+
+### Calculate BIC
+
+```{r BIC}
+extractAIC(om1, k = log(n))
+extractAIC(om2, k = log(n))
+extractAIC(om3, k = log(n))
+extractAIC(om4, k = log(n))
+extractAIC(om5, k = log(n))
+extractAIC(om6, k = log(n))
+extractAIC(om7, k = log(n))
+extractAIC(om8, k = log(n))
+extractAIC(om9, k = log(n))
+```
+
+The minimum value of BIC corresponds to the predictor subset of size two: PONVhistory and Surgery.
+
+
+### Parsimonious model selection
+
+The minimum AIC and AIC$_{C}$ values each correspond to the predictor subset of size four. This subset consists of all three predictors having statistically significant coefficients in the full logistic regression model, both before and after adding the squared term for Age. These are PONVhistory, Gender, and Nonsmoker. The fourth variable of the subset is Surgery. Furthermore, the predictor subset of size four has a higher $R^2$ value than the predictor subset of size two. Therefore, we choose the predictor subset of size three as our parsimonious logistic regression model:
+
+$Y=g(\beta_{0}+\beta_{1}PONVhistory+\beta_{2}Gender+\beta_{3}Nonsmoker+\beta_{4}Surgery+e)$
+
+where *e* ~ iid $N(0,1)$.
+
+As before, we use the logit function to model the binary response variable:
+
+$g^{-1}(Y)=\log(\frac{\theta(Y)}{1-\theta(Y)})=\beta_{0}+\beta_{1}PONVhist+\beta_{2}Gender+\beta_{3}Nonsmoker+\beta_{4}Surgery+e$  
+
+where $\theta(Y)=\frac{\exp(Y)}{1+\exp(Y)}=\frac{1}{1+{\exp(-Y)}}$   
+
+```{r glmFit3, echo=FALSE}
+glmFit3 <- glm(PONV0to24 ~ PONVhistory + Gender + Nonsmoker + Surgery, 
+               family = binomial, data = ponv)
+summary(glmFit3)
+```
+
+The lrm function is very similar to the glm function, with identical output for the regression coefficient estimates. The glm function also provides a summary of the deviance residuals. The lrm function also provides results of the model likelihood ratio test, as well as indices for discrimination and rank discrimination.
+
+```{r rcsFit3, echo=FALSE}
+# lrm (Logistic Regression Model) function
+rcsFit3 <- lrm(PONV0to24 ~ PONVhistory + Gender + Nonsmoker + Surgery, data = ponv)
+rcsFit3
+```
+
+The chosen model has three estimated coefficients that are statistically significant, which are the same three that are statistically significant in the full model. In descending order of significance, these are PONVhistory, Gender, and Nonsmoker. The fourth predictor in the model is Surgery, but none of the estimated coefficients for this factor predictor variable are statistically significant.
+
+```{r marginalModelPlots3, echo=FALSE, warning=FALSE}
+mmps(glmFit3) # marginal model plots for the chosen model
+```
+
+Since the chosen model has only factor predictor variables, a marginal model plot could only be obtained for the linear fit. There is reasonable agreement between the two fits (actual and predicted) in the marginal model plot for the linear fit. This indicates that the model is an adequate fit for the data.
+
+As a final validity check, we next look at leverage values versus standardized deviance residuals.
+
+```{r stanresDev3, echo=FALSE, warning=FALSE}
+hval.glmFit3 <- influence(glmFit3)$hat # hat matrix (leverage values)
+p3 <- 4 # number of predictors (PONVhist + Gender + Nonsmoker + Surgery)
+avgLev.glmFit3 <- (p3 + 1) / n  # average leverage
+cutLev.glmFit3 <- 2 * avgLev.glmFit3  # cutoff for high leverage
+stanresDev.glmFit3 <- residuals(glmFit3)/sqrt(1-hval.glmFit3) # standardized deviance residuals
+plot(hval.glmFit3, stanresDev.glmFit3,
+     ylab = "Standardized Deviance Residuals",
+     xlab = "Leverage Values")
+abline(v = cutLev.glmFit3)
+identify(hval.glmFit3, stanresDev.glmFit3, labels = Patient)
+```
+
+The plot of leverage values and standardized deviance residuals consists of a single extreme leverage point, while the remaining points that are all clustered closer to a standard deviation of zero. Recall that none of the coefficients for Surgery were statistically significant. Furthermore, all have high standard errors, with one being more than double the value of the others. Finally, the predictor subsets of three and four have comparable $R^2$. So we will next remove the Surgery variable to give us the predictor subset of three as our parsimonious model:
+
+$Y=g(\beta_{0}+\beta_{1}PONVhistory+\beta_{2}Gender+\beta_{3}Nonsmoker+e)$
+
+where *e* ~ iid $N(0,1)$.
+
+As before, we use the logit function to model the binary response variable:
+
+$g^{-1}(Y)=\log(\frac{\theta(Y)}{1-\theta(Y)})=\beta_{0}+\beta_{1}PONVhist+\beta_{2}Gender+\beta_{3}Nonsmoker+e$  
+
+where $\theta(Y)=\frac{\exp(Y)}{1+\exp(Y)}=\frac{1}{1+{\exp(-Y)}}$ 
+
+
+```{r glmFit4, echo=FALSE, warning=FALSE}
+glmFit4 <- glm(PONV0to24 ~ PONVhistory + Gender + Nonsmoker, 
+               family = binomial, data = ponv)
+summary(glmFit4)
+mmps(glmFit4) # marginal model plots
+
+## Standardized deviance residuals
+hval.glmFit4 <- influence(glmFit4)$hat # hat matrix (leverage values)
+p4 <- 3 # number of predictors (PONVhist + Gender + Nonsmoker + Surgery)
+avgLev.glmFit4 <- (p4 + 1) / n  # average leverage
+cutLev.glmFit4 <- 2 * avgLev.glmFit4  # cutoff for high leverage
+stanresDev.glmFit4 <- residuals(glmFit4)/sqrt(1-hval.glmFit4) # standardized deviance residuals
+plot(hval.glmFit4, stanresDev.glmFit4,
+     ylab = "Standardized Deviance Residuals",
+     xlab = "Leverage Values")
+abline(v = cutLev.glmFit4)
+identify(hval.glmFit4, stanresDev.glmFit4, labels = Patient)
+```
+
+In the current model, the intercept and all three predictors are statistically significant. The marginal model plot shows reasonable agreement between the two fits (actual and predicted) for the linear fit. This indicates that the model is an adequate fit for the data. The plot of leverage values and standardized deviance residuals consists of points that are all within two standard deviations, which means there are no bad leverage points.
+
+We next proceed to assess the predictive ability of this model.
+
+```{r accuracy4, echo=FALSE}
+## Confusion matrix
+pred <- as.factor(ifelse(glmFit4$fitted.values<0.5,0,1))
+confusionMatrix(pred,PONV0to24)
+
+## ROC curve
+roc4 <- roc(PONV0to24, glmFit4$fitted.values, plot=TRUE); roc4
+
+## Calibration plot
+calibProbs = calibration(PONV0to24 ~ glmFit4$fitted.values)
+xyplot(calibProbs)
+```
+
+The area under the ROC curve (AUC) is `r round(roc4$auc,3)`. Since the ROC curve is a function of both sensitivity and specificity, the curve is insensitive to class imbalance. With a sensitivity of 0.94 and a specificity of 0.20, the model is good at classifying high risk patients, but poor at classifying low risk patients. This is reflected in the calibration plot, which has a slope that underestimates patients with low PONV risk, and overestimates patients with high PONV risk.
+
+
+## Resampling techniques
+
+
+### *k*-fold cross-validation
+
+We next perform logistic regression using five repeats of 10-fold cross-validation, to generate 50 different holdout sets for estimating model accuracy. With *k* chosen to be 10, each training set contains 90% of the entire data set, while each test set contains the other 10% of the data.
+
+```{r kFoldCV, warning=FALSE}
+set.seed(1)
+
+## Resampling specification is 5 repetitions of 10-fold cross-validation
+# Make syntactically valid names for the factor levels of the response variable
+logisticReg <- train(make.names(PONV0to24) ~ Age + Age^2 + Gender + 
+                       Diagnosis + Surgery + BMI + 
+                       Nonsmoker + KinetosisHistory + PONVhistory, 
+                     data = ponv, 
+                     method = "glm",
+                     trControl = trainControl(method = "repeatedcv",
+                                              number = 10,
+                                              repeats = 5))
+
+## Summary and results
+logisticReg
+summary(logisticReg)
+
+## Confusion matrix
+CM <- confusionMatrix(logisticReg); CM
+
+## Sensitivity
+print("Sensitivity:")
+CM$table[4]/(CM$table[3]+CM$table[4])
+
+## Specificity
+print("Specificity:")
+CM$table[1]/(CM$table[1]+CM$table[2])
+
+## ROC curve
+YhatTestProb = predict(logisticReg, ponv, type = 'prob')
+roc <- roc(as.factor(as.numeric(PONV0to24)-1),
+         as.numeric(unlist(YhatTestProb[,2])))
+roc$auc
+plot(roc)
+
+## Calibration plot
+calibProbs = calibration(as.factor(as.numeric(PONV0to24)-1) ~ 
+                           as.numeric(unlist(YhatTestProb[,2])))
+xyplot(calibProbs)
+```
+
+Repeated 10-fold cross-validation resulted in a logistic regression model with an AUC of `r round(roc$auc, 2)`, which is an improvement over the AUC of `r round(roc4$auc,2)` obtained for our baseline model developed from all possible subets. With a sensitivity of 0.31 and a specificity of 0.83, the model is poor at classifying high risk patients, but good at classifying low risk patients.
+
+The choice of *k* to be 10 for *k*-fold cross-validation avoids the high bias of smaller values of *k*, as well as the computational burden of higher values of *k*. *k*-fold cross-validation generally has high variance compared to other methods. The potential issues with bias and variance become negligible for large training sets. Applying 10-fold cross-validation to our data set resulted in training sets each having a sample size between 414 and 416, which may be considered reasonably large. Furthermore, repeating the *k*-fold cross-validation procedure is known as an effective way to increase the precision of the estimates and still maintain a small bias.
+
+Three of the predictors in the full model have estimated coefficients that are statistically significant at the $\alpha=.05$ level or lower. In descending order of significance, these are PONV history, gender, and nonsmoker. These match the subset of predictors obtained from the model fitted using all possible subsets on the full data set.
+
+We next look at the bootstrap technique of resampling.
+
+
+### The bootstrap
+
+```{r bootstrap, warning=FALSE}
+bootStrap <- train(make.names(PONV0to24) ~ Age + I(Age^2) + Gender + 
+                     Diagnosis + Surgery + BMI + 
+                     Nonsmoker + KinetosisHistory + PONVhistory, 
+                   data = ponv, 
+                   method = "glm", 
+                   metric = "ROC", 
+                   trControl = trainControl(method = "boot",
+                                            classProbs = TRUE))
+
+## Summary and results
+bootStrap # summary and results
+summary(bootStrap) # coefficient estimates
+
+## Confusion matrix
+CM <- confusionMatrix(bootStrap); CM
+
+## Sensitivity
+print("Sensitivity:")
+CM$table[4]/(CM$table[3]+CM$table[4])
+
+## Specificity
+print("Specificity:")
+CM$table[1]/(CM$table[1]+CM$table[2])
+
+## ROC curve
+YhatTestProb = predict(bootStrap, ponv, type = 'prob')
+roc <- roc(as.factor(as.numeric(PONV0to24)-1),
+         as.numeric(unlist(YhatTestProb[,2])))
+roc$auc
+plot(roc)
+
+## Calibration plot
+calibProbs = calibration(as.factor(as.numeric(PONV0to24)-1) ~ 
+                           as.numeric(unlist(YhatTestProb[,2])))
+xyplot(calibProbs)
+```
+
+Bootstrapping resulted in a logistic regression model with an AUC of `r round(roc$auc, 2)`, which is an improvement over our two preceding models. With a sensitivity of 0.34 and a specificity of 0.78, this model provides the most reasonable balance of our three models.
+
+Three of the predictors in the full model have estimated coefficients that are statistically significant at the $\alpha=.05$ level or lower. In descending order of significance, these are PONV history, gender, and nonsmoker. These match the subset of predictors obtained from the preceding two models.
+
+
+## Predictions
+
+We will next make some predictions of PONV for some examples of hypothetical patients. Our logistic regression model obtained from all possible subsets consists of three predictors which are all binary variables. Since it lacks the numerous dummy variables of the two models trained with resampling techniques, we choose it as the parsimonious model to make our predictions.
+
+```{r predictions}
+mean(predict(glmFit4, data.frame(PONVhistory="1", Gender="1", Nonsmoker="1"),type="response"))
+
+mean(predict(glmFit4, data.frame(PONVhistory="1", Gender="1", Nonsmoker="0"),type="response"))
+
+mean(predict(glmFit4, data.frame(PONVhistory="1", Gender="0", Nonsmoker="1"),type="response"))
+
+mean(predict(glmFit4, data.frame(PONVhistory="1", Gender="0", Nonsmoker="0"),type="response"))
+
+mean(predict(glmFit4, data.frame(PONVhistory="0", Gender="1", Nonsmoker="1"),type="response"))
+
+mean(predict(glmFit4, data.frame(PONVhistory="0", Gender="1", Nonsmoker="0"),type="response"))
+
+mean(predict(glmFit4, data.frame(PONVhistory="0", Gender="0", Nonsmoker="1"),type="response"))
+
+mean(predict(glmFit4, data.frame(PONVhistory="0", Gender="0", Nonsmoker="0"),type="response"))
+```
+
+As expected, the more significant predictors that a patient has, the more likely the patient will have PONV. A patient with all three risk factors in the parsimonious model has a 72% probability of experiencing PONV, while a patient with none of the three risk factors has a 16% probability of experiencing PONV. Having previously determined that this is a valid predictive model, it may have practical application for patient populations having characteristics similar to the data set we investigated. In choosing a threshold for prescription of prophylaxis, healthcare professionals could select one of the hypothetical predictions in our example having a probability greater than 50%.
+
+
+## References
+
+Apfel, C. C., Kranke, P., Eberhart, L. H. J., Roos, A., and Roewer, N. (2002), "Comparison of Predictive Models for Postoperative Nausea and Vomiting," *British Journal of Anaesthesia*, 88 (2), 234-40.
+
+Eberhart, L. H. J., Hogel, J., Seeling, W., Staack, A.M., Geldner, G., and Georgieff, M. (2000), "Evaluation of Three Risk Scores to Predict Postoperative Nausea and Vomiting," *Acta Anaesthesiologica Scandinavica*, 44, 480–488.
+
+James, G., Witten, D., Hastie, T., and Tibshirani, R. (2021), *An Introduction to Statistical Learning* (2nd ed.), New York, NY: Springer Science+Business Media, LLC.
+
+Kuhn, M., and Johnson, K. (2013), *Applied Predictive Modeling*, New York	, NY: Springer Science+Business Media, LLC.
+
+Pampel, F. C. (2021), *Logistic Regression* (2nd ed.), Thousand Oaks, CA: SAGE Publications, Inc.
+
+Sheather, S. J. (2009), *A Modern Approach to Regression with R*, New York, NY: Springer Science+Business Media, LLC.
+
+Sinclair, D. R., Chung, F., and Mezei, G. (1999), "Can Postoperative Nausea and Vomiting Be Predicted?" *Anesthesiology*, 91, 109-118.
+
+Thomas, R., Jones, N. A., and Strike, P. (2002), "The Value of Risk Scores for Predicting Postoperative Nausea and Vomiting when Used to Compare Patient Groups in a Randomised Controlled Trial," *Anaesthesia*, 57, 1119-1128.
+
+van den Bosch, J.E., Kalkman, C. J., Vergouwe, Y., Van Klei, W. A., Bonsel, G. J., Grobbee, D. E., and Moons, K. G. M. (2005), "Assessing the Applicability of Scoring Systems for Predicting Postoperative Nausea and Vomiting," *Anaesthesia*, 60, 323-331.
+
+Vidakovic, B. (2017), *Engineering Biostatistics*, Hoboken, NJ: John Wiley & Sons Ltd.
