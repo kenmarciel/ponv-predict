@@ -4,8 +4,8 @@ author: "Ken Marciel"
 date: "2/7/2022"
 output:
   word_document: default
-  html_document: default
   pdf_document: default
+  html_document: default
 ---
 ```{r clearEnvironment, include=FALSE}
 ## Computing environment
@@ -601,6 +601,8 @@ We next look at the bootstrap technique of resampling.
 
 ### The bootstrap
 
+A random sample equal to the size of the data set is taken *with replacement*. This is repeated 25 times to fit the full logistic regression model.
+
 ```{r bootstrap, warning=FALSE}
 bootStrap <- train(make.names(PONV0to24) ~ Age + I(Age^2) + Gender + 
                      Diagnosis + Surgery + BMI + 
@@ -646,7 +648,7 @@ Three of the predictors in the full model have estimated coefficients that are s
 
 ## Predictions
 
-We will next make some predictions of PONV for some examples of hypothetical patients. Our logistic regression model obtained from all possible subsets consists of three predictors which are all binary variables. Since it lacks the numerous dummy variables of the two models trained with resampling techniques, we choose it as the parsimonious model to make our predictions.
+We will next make predictions of PONV for some examples of hypothetical patients. Our logistic regression model obtained from all possible subsets consists of three predictors which are all binary variables. Since it lacks the numerous dummy variables of the two models trained with resampling techniques, we choose it as the parsimonious model to make our predictions.
 
 ```{r predictions}
 mean(predict(glmFit4, data.frame(PONVhistory="1", Gender="1", Nonsmoker="1"),type="response"))
@@ -666,7 +668,7 @@ mean(predict(glmFit4, data.frame(PONVhistory="0", Gender="0", Nonsmoker="1"),typ
 mean(predict(glmFit4, data.frame(PONVhistory="0", Gender="0", Nonsmoker="0"),type="response"))
 ```
 
-As expected, the more significant predictors that a patient has, the more likely the patient will have PONV. A patient with all three risk factors in the parsimonious model has a 72% probability of experiencing PONV, while a patient with none of the three risk factors has a 16% probability of experiencing PONV. Having previously determined that this is a valid predictive model, it may have practical application for patient populations having characteristics similar to the data set we investigated. In choosing a threshold for prescription of prophylaxis, healthcare professionals could select one of the hypothetical predictions in our example having a probability greater than 50%.
+As expected, the more significant predictors that a patient has, the more likely the patient will have PONV. A patient with all three risk factors in the parsimonious model has a 72% probability of experiencing PONV, while a patient with none of the three risk factors has a 16% probability of experiencing PONV. Having previously determined that this is a valid predictive model, it may have practical application for patient populations with characteristics like the data set we investigated. In choosing a threshold for prescription of prophylaxis, healthcare professionals could select one of the two hypothetical predictions in our example having a probability greater than 50%.
 
 
 ## References
